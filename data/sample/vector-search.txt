@@ -1,0 +1,16 @@
+Vector search is how a RAG system finds the right chunks.
+
+Each chunk of text is converted into an embedding, a vector of numbers. Two
+chunks with similar meanings end up with vectors that point in similar
+directions. Cosine similarity measures the angle between two vectors: a value
+near 1 means very similar, near 0 means unrelated.
+
+At query time the question is embedded with the same model, and the system
+returns the chunks whose vectors are closest to the question vector. This is
+called nearest-neighbor search. With a few thousand chunks, comparing the
+question against every chunk is fast enough. With millions, an approximate
+index trades a little accuracy for a lot of speed.
+
+Embeddings are the foundation the rest of the system stands on. If two
+chunks about different topics get similar vectors, retrieval returns the
+wrong context and the answer goes wrong with it.
