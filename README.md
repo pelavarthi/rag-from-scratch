@@ -9,6 +9,10 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `rag/chunking.py` — sentence-aware chunker: packs whole sentences up to a size limit, with an overlap so facts straddling a boundary appear in both chunks.
 - `rag/pipeline.py` — `build_chunks(dir)` ties it together; also a CLI: `python -m rag.pipeline data/sample --out chunks.jsonl`.
 
+## Day 2: embeddings — baseline encoder + pluggable interface
+
+- `rag/embeddings.py` — `Embedder` protocol (`dim`, `embed`, `embed_many`) so any encoder can be swapped in later. `HashingEmbedder` is the stdlib-only baseline: words are lowercased, hashed with MD5 into 256 buckets, counted, and L2-normalized, so similar texts score higher on cosine similarity. Also `cosine_similarity`, `normalize`, and `embed_chunks`, which pairs each chunk with its vector.
+
 ## Quickstart
 
 ```bash
