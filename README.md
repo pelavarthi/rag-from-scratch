@@ -13,6 +13,10 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 
 - `rag/embeddings.py` — `Embedder` protocol (`dim`, `embed`, `embed_many`) so any encoder can be swapped in later. `HashingEmbedder` is the stdlib-only baseline: words are lowercased, hashed with MD5 into 256 buckets, counted, and L2-normalized, so similar texts score higher on cosine similarity. Also `cosine_similarity`, `normalize`, and `embed_chunks`, which pairs each chunk with its vector.
 
+## Day 3: vector store — in-memory index, cosine search, persistence
+
+- `rag/vector_store.py` — `VectorStore` holds embedded chunks and searches them by cosine similarity, best first (brute-force scan, the baseline Day 10's approximate index has to beat). `from_chunks` builds a store in one call, `search_text` embeds the query and searches, and `save`/`load` persist the whole index to one JSON file so it can be reused without re-embedding. `SearchResult` pairs each hit's chunk with its score.
+
 ## Quickstart
 
 ```bash

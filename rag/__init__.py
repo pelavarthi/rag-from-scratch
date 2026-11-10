@@ -12,6 +12,7 @@ from .embeddings import (
 )
 from .ingest import ingest_directory, load_document
 from .pipeline import build_chunks
+from .vector_store import SearchResult, VectorStore
 
 __all__ = [
     "Chunk",
@@ -19,6 +20,8 @@ __all__ = [
     "EmbeddedChunk",
     "Embedder",
     "HashingEmbedder",
+    "SearchResult",
+    "VectorStore",
     "build_chunks",
     "chunk_document",
     "cosine_similarity",
