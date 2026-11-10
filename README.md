@@ -17,6 +17,11 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 
 - `rag/vector_store.py` — `VectorStore` holds embedded chunks and searches them by cosine similarity, best first (brute-force scan, the baseline Day 10's approximate index has to beat). `from_chunks` builds a store in one call, `search_text` embeds the query and searches, and `save`/`load` persist the whole index to one JSON file so it can be reused without re-embedding. `SearchResult` pairs each hit's chunk with its score.
 
+## Day 4: retrieval — top-k, MMR diversity, metadata filters
+
+- `rag/retrieval.py` — `Retriever` ties the store and embedder together: it embeds the question, fetches more candidates than it needs, and returns the `k` most useful chunks. `matches_metadata` narrows a search before ranking (by `doc_id` or any chunk metadata, one value or a list of acceptable values), and `mmr_rerank` applies maximal marginal relevance so the results cover different angles instead of repeating the same fact: each new pick balances relevance to the query against how different it is from the chunks already picked, with `lambda_mult` setting the trade-off.
+- `rag/vector_store.py` — `search` and `search_text` take an optional `where` predicate that filters chunks before scoring; `search_with_vectors` also returns each hit's vector, which the reranker needs to compare candidates against each other.
+
 ## Quickstart
 
 ```bash

@@ -10,6 +10,7 @@ reused without re-embedding everything.
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,8 +65,34 @@ class VectorStore:
                 )
         self._entries.extend(embedded)
 
-    def search(self, query_vector: list[float], k: int = 5) -> list[SearchResult]:
-        """Return the `k` chunks closest to `query_vector`, best first."""
+    def search(
+        self,
+        query_vector: list[float],
+        k: int = 5,
+        where: Callable[[Chunk], bool] | None = None,
+    ) -> list[SearchResult]:
+        """Return the `k` chunks closest to `query_vector`, best first.
+
+        `where` is an optional predicate: only chunks it accepts are
+        scored, so a search can be narrowed to one document or source
+        before ranking.
+        """
+        return [
+            result
+            for result, _ in self.search_with_vectors(query_vector, k=k, where=where)
+        ]
+
+    def search_with_vectors(
+        self,
+        query_vector: list[float],
+        k: int = 5,
+        where: Callable[[Chunk], bool] | None = None,
+    ) -> list[tuple[SearchResult, list[float]]]:
+        """Like `search`, but each hit also carries its vector.
+
+        Rerankers such as MMR need the vectors to compare candidates
+        against each other, so they use this instead of `search`.
+        """
         if k <= 0:
             raise ValueError("k must be positive")
         if len(query_vector) != self._dim:
@@ -73,19 +100,32 @@ class VectorStore:
                 f"query dim {len(query_vector)} does not match store dim {self._dim}"
             )
         scored = [
-            SearchResult(chunk=item.chunk, score=cosine_similarity(query_vector, item.vector))
+            (
+                SearchResult(
+                    chunk=item.chunk,
+                    score=cosine_similarity(query_vector, item.vector),
+                ),
+                item.vector,
+            )
             for item in self._entries
+            if where is None or where(item.chunk)
         ]
-        scored.sort(key=lambda r: r.score, reverse=True)
+        scored.sort(key=lambda pair: pair[0].score, reverse=True)
         return scored[:k]
 
-    def search_text(self, query: str, embedder: Embedder, k: int = 5) -> list[SearchResult]:
+    def search_text(
+        self,
+        query: str,
+        embedder: Embedder,
+        k: int = 5,
+        where: Callable[[Chunk], bool] | None = None,
+    ) -> list[SearchResult]:
         """Embed `query` with `embedder`, then search for the nearest chunks."""
         if embedder.dim != self._dim:
             raise ValueError(
                 f"embedder dim {embedder.dim} does not match store dim {self._dim}"
             )
-        return self.search(embedder.embed(query), k=k)
+        return self.search(embedder.embed(query), k=k, where=where)
 
     def save(self, path: str | Path) -> None:
         """Write the whole index to one JSON file, atomically.
