@@ -29,6 +29,11 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `server/store.go` — loads the index JSON, searches it by cosine similarity, and filters by metadata. `server/retrieve.go` — the `Retriever` (embed, over-fetch, MMR rerank) ported from `rag/retrieval.py`.
 - `scripts/build_index.py` — builds the index JSON the server loads: `python scripts/build_index.py data/sample --out server/index.json`. `server/index.json` is a sample index built from `data/sample` so the server runs out of the box.
 
+## Day 6: hybrid search + reranking
+
+- `rag/hybrid.py` — `BM25Index` scores chunks by exact words: term frequency times inverse document frequency, damped by chunk length, so a rare word like "quark" matters more than a word that appears everywhere. `reciprocal_rank_fusion` merges the vector ranking and the BM25 ranking using only ranks (`1 / (60 + rank)` per list), which is what makes the merge fair — a BM25 score and a cosine similarity live on different scales, so comparing raw scores would be meaningless. `HybridRetriever` runs both searches, fuses them, and reranks the fused list with MMR, so the final results are relevant, diverse, and reachable by either kind of match.
+- `rag/vector_store.py` — new `vector_for` lookup, so the reranker can find the vector of a chunk the keyword search surfaced.
+
 ## Quickstart
 
 ```bash

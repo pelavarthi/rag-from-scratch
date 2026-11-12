@@ -113,6 +113,21 @@ class VectorStore:
         scored.sort(key=lambda pair: pair[0].score, reverse=True)
         return scored[:k]
 
+    def vector_for(self, chunk: Chunk) -> list[float] | None:
+        """The stored vector for `chunk`, or None if it is not in the store.
+
+        Matched by document id and chunk index. Rerankers use this to
+        look up the vector of a chunk they found by another route, for
+        example a BM25 hit that the vector search also needs to compare.
+        """
+        for item in self._entries:
+            if (
+                item.chunk.doc_id == chunk.doc_id
+                and item.chunk.index == chunk.index
+            ):
+                return item.vector
+        return None
+
     def search_text(
         self,
         query: str,
