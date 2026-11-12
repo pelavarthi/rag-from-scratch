@@ -22,11 +22,21 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `rag/retrieval.py` — `Retriever` ties the store and embedder together: it embeds the question, fetches more candidates than it needs, and returns the `k` most useful chunks. `matches_metadata` narrows a search before ranking (by `doc_id` or any chunk metadata, one value or a list of acceptable values), and `mmr_rerank` applies maximal marginal relevance so the results cover different angles instead of repeating the same fact: each new pick balances relevance to the query against how different it is from the chunks already picked, with `lambda_mult` setting the trade-off.
 - `rag/vector_store.py` — `search` and `search_text` take an optional `where` predicate that filters chunks before scoring; `search_with_vectors` also returns each hit's vector, which the reranker needs to compare candidates against each other.
 
+## Day 5: Go retrieval API server
+
+- `server/` — a stdlib-only Go server (`go run ./server --index server/index.json`) that loads an index built by the Python pipeline and answers queries over HTTP. `POST /query` takes `{"query": "...", "k": 5}` and returns the k most useful chunks with scores; optional `lambda_mult` trades relevance against diversity and `where` filters by `doc_id` or metadata before ranking. `GET /health` and `GET /stats` report what the index holds, and `POST /reload` re-reads the index file without restarting.
+- `server/embed.go` — a port of the Python `HashingEmbedder` (same MD5 word buckets, same L2 normalization), so a query embedded in Go lands in the same space as chunk vectors built in Python; a test checks it against vectors computed by the Python encoder.
+- `server/store.go` — loads the index JSON, searches it by cosine similarity, and filters by metadata. `server/retrieve.go` — the `Retriever` (embed, over-fetch, MMR rerank) ported from `rag/retrieval.py`.
+- `scripts/build_index.py` — builds the index JSON the server loads: `python scripts/build_index.py data/sample --out server/index.json`. `server/index.json` is a sample index built from `data/sample` so the server runs out of the box.
+
 ## Quickstart
 
 ```bash
 python -m pytest
 python -m rag.pipeline data/sample
+python scripts/build_index.py data/sample --out server/index.json
+go run ./server --index server/index.json
+curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
 ```
 
 ## Plan
