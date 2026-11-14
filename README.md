@@ -34,11 +34,17 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `rag/hybrid.py` — `BM25Index` scores chunks by exact words: term frequency times inverse document frequency, damped by chunk length, so a rare word like "quark" matters more than a word that appears everywhere. `reciprocal_rank_fusion` merges the vector ranking and the BM25 ranking using only ranks (`1 / (60 + rank)` per list), which is what makes the merge fair — a BM25 score and a cosine similarity live on different scales, so comparing raw scores would be meaningless. `HybridRetriever` runs both searches, fuses them, and reranks the fused list with MMR, so the final results are relevant, diverse, and reachable by either kind of match.
 - `rag/vector_store.py` — new `vector_for` lookup, so the reranker can find the vector of a chunk the keyword search surfaced.
 
+## Day 7: answer generation — prompt builder, context packing, citations
+
+- `rag/answers.py` — `pack_context` fits the best chunks into a character budget, best first, truncating only the first chunk if it alone overflows so an answer never has zero context. `build_prompt` numbers each passage [1], [2], ... and instructs the model to answer only from those passages, citing every claim; with no results it says so instead of inventing passages. `parse_citations` and `verify_citations` read the model's [n] references back and drop any that were not in the prompt, so a hallucinated [99] never reaches the user. `AnswerGenerator` wires it together and takes the model as any prompt-to-string callable, so a real LLM client can be swapped in later with no other change. `Answer` carries the text plus only the verified citations; `format_sources` renders them as a readable source list.
+- `scripts/answer.py` — end-to-end demo: `python scripts/answer.py data/sample "what is rag?"` retrieves with the hybrid retriever and answers with a stub that quotes the top passage.
+
 ## Quickstart
 
 ```bash
 python -m pytest
 python -m rag.pipeline data/sample
+python scripts/answer.py data/sample "what is rag?"
 python scripts/build_index.py data/sample --out server/index.json
 go run ./server --index server/index.json
 curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
