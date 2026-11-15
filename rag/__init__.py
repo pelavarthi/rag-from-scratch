@@ -12,6 +12,14 @@ from .answers import (
     verify_citations,
 )
 from .chunking import chunk_document, split_into_chunks, split_sentences
+from .chunking_v2 import (
+    chunk_document_v2,
+    deduplicate_chunks,
+    normalize_text,
+    split_recursive,
+    split_semantic,
+    text_fingerprint,
+)
 from .document import Chunk, Document
 from .embeddings import (
     EmbeddedChunk,
@@ -72,9 +80,11 @@ __all__ = [
     "build_chunks",
     "build_prompt",
     "chunk_document",
+    "chunk_document_v2",
     "citation_precision",
     "content_words",
     "cosine_similarity",
+    "deduplicate_chunks",
     "embed_chunks",
     "evaluate_answers",
     "evaluate_retrieval",
@@ -85,6 +95,7 @@ __all__ = [
     "matches_metadata",
     "mmr_rerank",
     "normalize",
+    "normalize_text",
     "pack_context",
     "parse_citations",
     "precision_at_k",
@@ -93,7 +104,10 @@ __all__ = [
     "reciprocal_rank_fusion",
     "split_claims",
     "split_into_chunks",
+    "split_recursive",
+    "split_semantic",
     "split_sentences",
+    "text_fingerprint",
     "tokenize",
     "verify_citations",
 ]

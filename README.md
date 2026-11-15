@@ -45,6 +45,11 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `data/sample/eval.json` — six golden questions over the sample docs, each with a reference answer and the chunk indices that answer it.
 - `scripts/evaluate.py` — CLI: `python scripts/evaluate.py data/sample` builds the index, runs both reports, and prints them. `--ks 1,3,5` sets the k values, `--skip-answers` scores retrieval only.
 
+## Day 9: chunking v2 — recursive and semantic chunking, dedup
+
+- `rag/chunking_v2.py` — three ways to cut a document that Day 1's sentence packer cannot do. `split_recursive` splits on structure first: paragraph breaks, then line breaks, then sentences, then words, so a chunk keeps a paragraph together when it fits and only crosses a strong boundary when it has to; overlap restarts at the first piece starting inside the overlap window, so overlap 0 repeats nothing. `split_semantic` groups sentences by topic: each sentence is embedded with the pluggable `Embedder`, and a chunk keeps growing while each new sentence is similar enough (cosine similarity above a threshold) to the one before it, so a chunk ends when the topic changes instead of when a counter runs out, with a max size as a backstop. `deduplicate_chunks` drops exact copies by a hash of the normalized text, and — when an embedder is given — near-copies whose vectors are nearly identical, keeping the first of each. `chunk_document_v2` wraps either strategy and tags chunks with `"strategy"` in their metadata.
+- `rag/pipeline.py` — `build_chunks` now takes `--strategy sentence|recursive|semantic`, `--dedup`, and `--threshold`, so the whole pipeline can run on the new chunkers: `python -m rag.pipeline data/sample --strategy recursive --dedup`.
+
 ## Quickstart
 
 ```bash
