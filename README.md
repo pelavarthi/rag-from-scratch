@@ -56,6 +56,13 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - The server uses it with `go run . --hnsw --ef 64` (from `server/`): unfiltered queries search the graph, filtered ones still brute-force scan, since the graph cannot skip vectors a filter would reject. `/stats` reports which index is active, and `/reload` rebuilds the graph with the new index.
 - Benchmarks on 2000 random unit vectors, dim 256 (`go test -bench .` in `server/`): brute force 1.13 ms/query, HNSW ef=16 0.33 ms (3.4x faster), ef=64 0.70 ms (1.6x). Recall@10 against brute force is 1.000 at ef=64 and 0.920 at ef=10 — a wider beam buys accuracy for speed, and top-1 matches 20/20 queries. Building the graph costs ~1.8 s for 2000 vectors, paid once at startup.
 
+## Day 11: incremental indexing — watch, add, update, delete
+
+- `rag/incremental.py` — a manifest of one SHA-256 hash per document remembers what the index already holds, so an update only touches what moved. `scan_directory` hashes every file under the source root; `diff_manifest` sorts each doc into added, changed, deleted, or unchanged by comparing hashes (mtime is recorded but never trusted — touching a file without editing it is a no-op). `IncrementalIndexer.update` removes the old chunks of changed and deleted docs, chunks and embeds only the added and changed ones, and rewrites the index and manifest only when something moved. `watch` polls the directory and calls back only on rounds that changed anything. `open_indexer` loads an existing index and manifest, or starts fresh — a first run over a directory with no index indexes everything, exactly like a full build.
+- `rag/vector_store.py` — `remove_doc` and `remove_where` drop chunks from the store, so an update can forget a document's old chunks before its new ones go in; a search never returns a chunk from a version that no longer exists.
+- `scripts/build_index.py --incremental` updates an index in place instead of rebuilding it, and `scripts/watch_index.py` keeps an index fresh in the background (`--once` applies a single update and exits). The Go server picks the new index up with `POST /reload`.
+- Verified on `data/sample`: an incremental update after editing one file, adding one, and deleting one embedded only 2 chunks (vs 6 for a full build), and the resulting index holds exactly the same chunks and vectors as a fresh full rebuild.
+
 ## Quickstart
 
 ```bash

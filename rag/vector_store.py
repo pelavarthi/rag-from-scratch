@@ -65,6 +65,23 @@ class VectorStore:
                 )
         self._entries.extend(embedded)
 
+    def remove_where(self, predicate: Callable[[Chunk], bool]) -> int:
+        """Drop every chunk `predicate` accepts. Returns how many went.
+
+        Removal is how an index forgets: when a document changes or is
+        deleted, its old chunks are removed before the new ones go in,
+        so a search never returns a chunk from a version that no longer
+        exists.
+        """
+        kept = [item for item in self._entries if not predicate(item.chunk)]
+        removed = len(self._entries) - len(kept)
+        self._entries = kept
+        return removed
+
+    def remove_doc(self, doc_id: str) -> int:
+        """Drop every chunk from one document. Returns how many went."""
+        return self.remove_where(lambda chunk: chunk.doc_id == doc_id)
+
     def search(
         self,
         query_vector: list[float],
