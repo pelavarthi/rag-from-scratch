@@ -15,7 +15,33 @@ func testServer(t *testing.T) *Server {
 		"cats sleep all day in the sun",
 		"dogs run in the park every morning",
 	})
-	return NewServer(retriever, "")
+	return NewServer(retriever, "", false, 0)
+}
+
+func TestQueryEndpointUsesHNSW(t *testing.T) {
+	retriever := testRetriever(t, []string{
+		"cats sleep all day in the sun",
+		"dogs run in the park every morning",
+	})
+	retriever.HNSW = BuildHNSW(retriever.Store, defaultHNSWOptions())
+	retriever.HNSWEF = 64
+	server := NewServer(retriever, "", true, 64)
+
+	body := bytes.NewBufferString(`{"query": "cats sleep", "k": 1}`)
+	req := httptest.NewRequest(http.MethodPost, "/query", body)
+	rec := httptest.NewRecorder()
+	server.routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var resp queryResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Text != "cats sleep all day in the sun" {
+		t.Errorf("HNSW query returned %v, want the cats chunk", resp.Results)
+	}
 }
 
 func TestQueryEndpoint(t *testing.T) {

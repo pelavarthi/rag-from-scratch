@@ -50,6 +50,12 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `rag/chunking_v2.py` — three ways to cut a document that Day 1's sentence packer cannot do. `split_recursive` splits on structure first: paragraph breaks, then line breaks, then sentences, then words, so a chunk keeps a paragraph together when it fits and only crosses a strong boundary when it has to; overlap restarts at the first piece starting inside the overlap window, so overlap 0 repeats nothing. `split_semantic` groups sentences by topic: each sentence is embedded with the pluggable `Embedder`, and a chunk keeps growing while each new sentence is similar enough (cosine similarity above a threshold) to the one before it, so a chunk ends when the topic changes instead of when a counter runs out, with a max size as a backstop. `deduplicate_chunks` drops exact copies by a hash of the normalized text, and — when an embedder is given — near-copies whose vectors are nearly identical, keeping the first of each. `chunk_document_v2` wraps either strategy and tags chunks with `"strategy"` in their metadata.
 - `rag/pipeline.py` — `build_chunks` now takes `--strategy sentence|recursive|semantic`, `--dedup`, and `--threshold`, so the whole pipeline can run on the new chunkers: `python -m rag.pipeline data/sample --strategy recursive --dedup`.
 
+## Day 10: approximate index — HNSW in Go + benchmarks
+
+- `server/hnsw.go` — a from-scratch HNSW index (Malkov & Yashunin, 2018): vectors live on a stack of layers, sparse on top and full at the bottom. A search walks greedily down the upper layers, then runs a beam search (width `ef`) on layer 0, so it visits roughly log(n) vectors instead of all n. Distance is `1 - cosine similarity`. Levels fall off geometrically (`1/ln(M)`), so most nodes sit on layer 0 and only a few reach the top. New nodes link to their M closest neighbors per layer, pruning over-full lists back to the closest.
+- The server uses it with `go run . --hnsw --ef 64` (from `server/`): unfiltered queries search the graph, filtered ones still brute-force scan, since the graph cannot skip vectors a filter would reject. `/stats` reports which index is active, and `/reload` rebuilds the graph with the new index.
+- Benchmarks on 2000 random unit vectors, dim 256 (`go test -bench .` in `server/`): brute force 1.13 ms/query, HNSW ef=16 0.33 ms (3.4x faster), ef=64 0.70 ms (1.6x). Recall@10 against brute force is 1.000 at ef=64 and 0.920 at ef=10 — a wider beam buys accuracy for speed, and top-1 matches 20/20 queries. Building the graph costs ~1.8 s for 2000 vectors, paid once at startup.
+
 ## Quickstart
 
 ```bash
@@ -60,6 +66,12 @@ python scripts/evaluate.py data/sample
 python scripts/build_index.py data/sample --out server/index.json
 go run ./server --index server/index.json
 curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
+```
+
+```bash
+cd server
+go test ./...
+go test -bench . -run '^$'
 ```
 
 ## Plan

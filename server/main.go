@@ -20,6 +20,8 @@ func main() {
 	indexPath := flag.String("index", "index.json", "path to the vector index JSON built by scripts/build_index.py")
 	addr := flag.String("addr", ":8080", "address to listen on")
 	lambda := flag.Float64("lambda", 0.7, "MMR trade-off between relevance and diversity")
+	useHNSW := flag.Bool("hnsw", false, "search with the approximate HNSW index instead of brute force")
+	ef := flag.Int("ef", 64, "HNSW beam width: wider is more accurate and slower")
 	flag.Parse()
 
 	store, err := LoadStore(*indexPath)
@@ -34,7 +36,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("retriever: %v", err)
 	}
-	server := NewServer(retriever, *indexPath)
+	if *useHNSW {
+		retriever.HNSW = BuildHNSW(store, defaultHNSWOptions())
+		retriever.HNSWEF = *ef
+		log.Printf("hnsw index built: %d vectors, max level %d, ef %d",
+			retriever.HNSW.Len(), retriever.HNSW.MaxLevel(), *ef)
+	}
+	server := NewServer(retriever, *indexPath, *useHNSW, *ef)
 	log.Printf("rag server listening on %s (%d chunks, dim %d)", *addr, store.Len(), store.Dim)
 	log.Fatal(http.ListenAndServe(*addr, server.routes()))
 }

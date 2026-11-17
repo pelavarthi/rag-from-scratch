@@ -56,11 +56,16 @@ func MMR(query []float64, candidates []ScoredEntry, k int, lambda float64) ([]Se
 }
 
 // Retriever searches a store for a question: embed, over-fetch, rerank.
+// When HNSW is set, unfiltered searches run on the approximate index
+// instead of the brute-force scan; filtered searches still scan, since
+// the graph cannot skip vectors a filter would reject.
 type Retriever struct {
 	Store           *Store
 	Embedder        *Embedder
 	Lambda          float64
 	FetchMultiplier int
+	HNSW            *HNSWIndex
+	HNSWEF          int
 }
 
 func NewRetriever(store *Store, embedder *Embedder, lambda float64, fetchMultiplier int) (*Retriever, error) {
@@ -107,6 +112,15 @@ func (r *Retriever) Retrieve(query string, k int, where map[string]any, lambda *
 	}
 
 	queryVector := r.Embedder.Embed(query)
-	candidates := r.Store.SearchWithVectors(queryVector, fetchK, where)
+	var candidates []ScoredEntry
+	if r.HNSW != nil && where == nil {
+		ef := r.HNSWEF
+		if ef < fetchK {
+			ef = fetchK
+		}
+		candidates = r.HNSW.Search(queryVector, fetchK, ef)
+	} else {
+		candidates = r.Store.SearchWithVectors(queryVector, fetchK, where)
+	}
 	return MMR(queryVector, candidates, k, lam)
 }

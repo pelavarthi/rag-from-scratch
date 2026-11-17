@@ -13,10 +13,30 @@ type Server struct {
 	mu        sync.RWMutex
 	retriever *Retriever
 	indexPath string
+	useHNSW   bool
+	hnswEF    int
 }
 
-func NewServer(retriever *Retriever, indexPath string) *Server {
-	return &Server{retriever: retriever, indexPath: indexPath}
+func NewServer(retriever *Retriever, indexPath string, useHNSW bool, hnswEF int) *Server {
+	return &Server{retriever: retriever, indexPath: indexPath, useHNSW: useHNSW, hnswEF: hnswEF}
+}
+
+// buildRetriever loads the index and, when HNSW is on, builds the graph
+// over it, keeping the retriever's MMR settings.
+func (s *Server) buildRetriever(store *Store, lambda float64, fetchMultiplier int) (*Retriever, error) {
+	embedder, err := NewEmbedder(store.Dim)
+	if err != nil {
+		return nil, err
+	}
+	retriever, err := NewRetriever(store, embedder, lambda, fetchMultiplier)
+	if err != nil {
+		return nil, err
+	}
+	if s.useHNSW {
+		retriever.HNSW = BuildHNSW(store, defaultHNSWOptions())
+		retriever.HNSWEF = s.hnswEF
+	}
+	return retriever, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -125,10 +145,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	indexType := "brute-force"
+	if s.retriever.HNSW != nil {
+		indexType = "hnsw"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"chunks": s.retriever.Store.Len(),
 		"dim":    s.retriever.Store.Dim,
 		"docs":   s.retriever.Store.DocIDs(),
+		"index":  indexType,
 	})
 }
 
@@ -144,16 +169,11 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "reloading index: "+err.Error())
 		return
 	}
-	embedder, err := NewEmbedder(store.Dim)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	s.mu.RLock()
 	lambda := s.retriever.Lambda
 	fetchMultiplier := s.retriever.FetchMultiplier
 	s.mu.RUnlock()
-	retriever, err := NewRetriever(store, embedder, lambda, fetchMultiplier)
+	retriever, err := s.buildRetriever(store, lambda, fetchMultiplier)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
