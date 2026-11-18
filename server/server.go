@@ -15,6 +15,10 @@ type Server struct {
 	indexPath string
 	useHNSW   bool
 	hnswEF    int
+	// cache, limiter, and keys are optional: nil means that piece is off.
+	cache   *QueryCache
+	limiter *RateLimiter
+	keys    *APIKeys
 }
 
 func NewServer(retriever *Retriever, indexPath string, useHNSW bool, hnswEF int) *Server {
@@ -71,6 +75,7 @@ type queryResponse struct {
 	Query   string     `json:"query"`
 	Results []queryHit `json:"results"`
 	TookMs  int64      `json:"took_ms"`
+	Cached  bool       `json:"cached"`
 }
 
 // handleQuery answers one search: {"query": "...", "k": 5} in, the k
@@ -95,6 +100,22 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	// A repeat of the same request answers from the cache, so the
+	// retriever only runs on a miss. The key covers the whole request,
+	// including filters and MMR settings.
+	if s.cache != nil {
+		if hits, ok := s.cache.Get(cacheKey(req)); ok {
+			w.Header().Set("X-Cache", "HIT")
+			writeJSON(w, http.StatusOK, queryResponse{
+				Query:   req.Query,
+				Results: hits,
+				TookMs:  time.Since(start).Milliseconds(),
+				Cached:  true,
+			})
+			return
+		}
+	}
+
 	s.mu.RLock()
 	results, err := s.retriever.Retrieve(req.Query, req.K, req.Where, req.LambdaMult, req.FetchK)
 	s.mu.RUnlock()
@@ -115,6 +136,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			Score:     result.Score,
 		})
 	}
+	if s.cache != nil {
+		s.cache.Put(cacheKey(req), hits)
+	}
+	w.Header().Set("X-Cache", "MISS")
 	writeJSON(w, http.StatusOK, queryResponse{
 		Query:   req.Query,
 		Results: hits,
@@ -149,12 +174,19 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if s.retriever.HNSW != nil {
 		indexType = "hnsw"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	stats := map[string]any{
 		"chunks": s.retriever.Store.Len(),
 		"dim":    s.retriever.Store.Dim,
 		"docs":   s.retriever.Store.DocIDs(),
 		"index":  indexType,
-	})
+	}
+	if s.cache != nil {
+		entries, hits, misses := s.cache.Stats()
+		stats["cache_entries"] = entries
+		stats["cache_hits"] = hits
+		stats["cache_misses"] = misses
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 // handleReload re-reads the index file from disk and swaps it in, so a
@@ -181,6 +213,10 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.retriever = retriever
 	s.mu.Unlock()
+	// The index changed, so cached answers may be stale.
+	if s.cache != nil {
+		s.cache.Clear()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "reloaded",
 		"chunks": store.Len(),
@@ -192,7 +228,9 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/stats", s.handleStats)
-	mux.HandleFunc("/query", s.handleQuery)
-	mux.HandleFunc("/reload", s.handleReload)
+	// /query and /reload sit behind API-key auth and rate limiting;
+	// /health and /stats stay public so monitors need no key.
+	mux.HandleFunc("/query", s.requireKey(s.rateLimit(s.handleQuery)))
+	mux.HandleFunc("/reload", s.requireKey(s.handleReload))
 	return mux
 }

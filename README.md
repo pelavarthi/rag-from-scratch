@@ -63,6 +63,13 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `scripts/build_index.py --incremental` updates an index in place instead of rebuilding it, and `scripts/watch_index.py` keeps an index fresh in the background (`--once` applies a single update and exits). The Go server picks the new index up with `POST /reload`.
 - Verified on `data/sample`: an incremental update after editing one file, adding one, and deleting one embedded only 2 chunks (vs 6 for a full build), and the resulting index holds exactly the same chunks and vectors as a fresh full rebuild.
 
+## Day 12: caching, rate limiting, API keys
+
+- `server/middleware.go` — three guards in front of the retriever, all stdlib-only. `QueryCache` remembers recent responses keyed on the whole request (query, k, MMR settings, filters), so a repeat answers in microseconds; entries expire after `--cache-ttl` (default 5m), the oldest go when the cache is full (`--cache-size`, default 1000), and `/reload` clears it so a new index never serves stale answers. `RateLimiter` is a token bucket per caller (API key, or IP when no key is sent): each caller starts with `--rate-burst` tokens and earns `--rate-limit` more per second, so short bursts pass and a sustained flood gets 429 with a `Retry-After` header. `APIKeys` stores only SHA-256 hashes of the configured keys, so a config dump never leaks a live key; with no keys configured the server stays open as before, and with keys on, `/query` and `/reload` require a valid `X-API-Key` header while `/health` and `/stats` stay public.
+- `server/server.go` — `/query` checks the cache first (responses carry `cached` and an `X-Cache: HIT/MISS` header) and stores misses; `/stats` reports `cache_entries`, `cache_hits`, and `cache_misses`; `/query` and `/reload` run through the auth and rate-limit wrappers.
+- `server/main.go` — `--api-keys` (or `RAG_API_KEYS`) turns auth on, `--gen-key` prints a fresh random key, `--cache-ttl`, `--cache-size`, `--rate-limit`, and `--rate-burst` tune the other two.
+- Verified live: with one key configured, a request without it got 401, the first keyed request got 200 with `X-Cache: MISS`, the repeat got 200 with `X-Cache: HIT`, and a third inside the burst window got 429. `go test ./...` in `server/` passes, and the Python suite is still 149 passed.
+
 ## Quickstart
 
 ```bash
