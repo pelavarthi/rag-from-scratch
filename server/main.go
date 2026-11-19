@@ -14,6 +14,10 @@
 // and /reload; --gen-key prints a fresh key. --rate-limit caps
 // requests per second per caller, and repeated queries are served
 // from an in-memory cache for --cache-ttl.
+//
+// `go run ./server bench` runs the HNSW tuning sweep instead of
+// serving: latency, recall, and index size per setting, saved to
+// benchmarks/hnsw-tuning.md.
 package main
 
 import (
@@ -27,6 +31,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bench" {
+		if err := runBench(); err != nil {
+			log.Fatalf("bench: %v", err)
+		}
+		return
+	}
+
 	indexPath := flag.String("index", "index.json", "path to the vector index JSON built by scripts/build_index.py")
 	addr := flag.String("addr", ":8080", "address to listen on")
 	lambda := flag.Float64("lambda", 0.7, "MMR trade-off between relevance and diversity")

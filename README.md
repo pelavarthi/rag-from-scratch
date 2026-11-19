@@ -70,6 +70,14 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 - `server/main.go` — `--api-keys` (or `RAG_API_KEYS`) turns auth on, `--gen-key` prints a fresh random key, `--cache-ttl`, `--cache-size`, `--rate-limit`, and `--rate-burst` tune the other two.
 - Verified live: with one key configured, a request without it got 401, the first keyed request got 200 with `X-Cache: MISS`, the repeat got 200 with `X-Cache: HIT`, and a third inside the burst window got 429. `go test ./...` in `server/` passes, and the Python suite is still 149 passed.
 
+## Day 13: benchmarks + tuning — latency, recall, index size
+
+- `server/tune.go` — the tuning sweep, run with `go run ./server bench` from `server/` (saves `benchmarks/hnsw-tuning.md`). Each M is built once and searched at every ef, the way the server runs it, and recall@10 is scored against the exact brute-force top 10 on the same 50 queries. `Recommend` picks the fastest setting that clears 0.95 recall, falling back to the highest recall when none does. `SummarizeStore` / `SummarizeHNSW` size the index: vectors dominate, and each graph link costs one 8-byte id.
+- `scripts/benchmark.py` — the Python end-to-end benchmark: `python scripts/benchmark.py data/sample` times chunking, embedding, and BM25 indexing separately, then times every golden question and reports query p50/p95 next to mean recall@k from the eval harness, plus the saved index size on disk (`--out` saves the report as markdown).
+- Measured on 2000 random unit vectors, dim 256, 50 queries, k=10: brute force p50 1.16 ms / p99 1.89 ms. M=16 ef=64 gives p50 0.67 ms, p99 1.22 ms, recall 0.930; M=16 ef=128 reaches 0.982 at p99 1.61 ms. The sweep recommends M=32 ef=64 (recall 0.992, p99 1.56 ms, 4.9 MB total vs 3.9 MB of vectors). A narrow beam on a sparse graph is the bad corner: M=8 ef=16 finds only 0.382 of the top 10. Two honest caveats: random vectors are near-orthogonal, so these recall numbers are a pessimistic bound — real text embeddings cluster and should do better at the same ef — and at 2000 vectors HNSW barely beats brute force on p99; the graph pays off as the index grows. Defaults stay M=16, ef=64 until measured on real data.
+- Measured on `data/sample` (6 chunks, dim 256): chunking 0.9 ms, embedding 0.9 ms, BM25 index 0.3 ms, query p50 0.7 ms / p95 0.9 ms, mean recall@5 1.000, index 15.1 KB. The sample is tiny, so these numbers are a smoke test that the pipeline is fast, not a load test.
+- `go test ./...` in `server/` passes, and the Python suite is now 153 passed.
+
 ## Quickstart
 
 ```bash
@@ -77,6 +85,7 @@ python -m pytest
 python -m rag.pipeline data/sample
 python scripts/answer.py data/sample "what is rag?"
 python scripts/evaluate.py data/sample
+python scripts/benchmark.py data/sample
 python scripts/build_index.py data/sample --out server/index.json
 go run ./server --index server/index.json
 curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
@@ -86,6 +95,7 @@ curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
 cd server
 go test ./...
 go test -bench . -run '^$'
+go run . bench
 ```
 
 ## Plan
