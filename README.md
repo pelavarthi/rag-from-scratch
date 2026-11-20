@@ -2,6 +2,34 @@
 
 Retrieval-augmented generation in Python + Go: chunking, embeddings, vector search, reranking, cited answers, and an eval harness. Built from scratch, standard library first, so every step is visible.
 
+## How it works
+
+A RAG system answers from your documents instead of from memory. At
+build time, documents are cut into chunks, each chunk is embedded into
+a vector, and the vectors are saved in an index. At query time, the
+question is embedded the same way, the nearest chunks are retrieved,
+and those chunks — not the model's memory — become the context for the
+answer, with every claim cited to a passage that was actually shown.
+
+```
+                        build time                       query time
+  docs ──► ingest ──► chunk ──► embed ──► index.json
+                                                      │
+  question ──► embed ──► retrieve (vector + BM25, MMR)
+                                                      │
+                                            pack + prompt ──► answer
+                                                      │
+                                              verify citations ──► sources
+```
+
+Two halves, one contract: the Python pipeline builds the index, and
+the Go server serves it. They are written in different languages but
+agree on exactly how text becomes a vector (the same MD5 word-hash
+embedder), so a query embedded in Go lands in the same space as chunk
+vectors built in Python. The Python side is where the ideas live
+(chunking, retrieval, answers, eval); the Go side is where the
+requests land (HTTP API, HNSW index, caching, rate limiting, API keys).
+
 ## Day 1: scaffold + ingestion and chunking
 
 - `rag/document.py` — `Document` and `Chunk` types. A chunk carries its source document id plus character offsets, so it can always be traced back.
@@ -24,7 +52,7 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 
 ## Day 5: Go retrieval API server
 
-- `server/` — a stdlib-only Go server (`go run ./server --index server/index.json`) that loads an index built by the Python pipeline and answers queries over HTTP. `POST /query` takes `{"query": "...", "k": 5}` and returns the k most useful chunks with scores; optional `lambda_mult` trades relevance against diversity and `where` filters by `doc_id` or metadata before ranking. `GET /health` and `GET /stats` report what the index holds, and `POST /reload` re-reads the index file without restarting.
+- `server/` — a stdlib-only Go server (from `server/`: `go run . --index index.json`) that loads an index built by the Python pipeline and answers queries over HTTP. `POST /query` takes `{"query": "...", "k": 5}` and returns the k most useful chunks with scores; optional `lambda_mult` trades relevance against diversity and `where` filters by `doc_id` or metadata before ranking. `GET /health` and `GET /stats` report what the index holds, and `POST /reload` re-reads the index file without restarting.
 - `server/embed.go` — a port of the Python `HashingEmbedder` (same MD5 word buckets, same L2 normalization), so a query embedded in Go lands in the same space as chunk vectors built in Python; a test checks it against vectors computed by the Python encoder.
 - `server/store.go` — loads the index JSON, searches it by cosine similarity, and filters by metadata. `server/retrieve.go` — the `Retriever` (embed, over-fetch, MMR rerank) ported from `rag/retrieval.py`.
 - `scripts/build_index.py` — builds the index JSON the server loads: `python scripts/build_index.py data/sample --out server/index.json`. `server/index.json` is a sample index built from `data/sample` so the server runs out of the box.
@@ -72,22 +100,30 @@ Retrieval-augmented generation in Python + Go: chunking, embeddings, vector sear
 
 ## Day 13: benchmarks + tuning — latency, recall, index size
 
-- `server/tune.go` — the tuning sweep, run with `go run ./server bench` from `server/` (saves `benchmarks/hnsw-tuning.md`). Each M is built once and searched at every ef, the way the server runs it, and recall@10 is scored against the exact brute-force top 10 on the same 50 queries. `Recommend` picks the fastest setting that clears 0.95 recall, falling back to the highest recall when none does. `SummarizeStore` / `SummarizeHNSW` size the index: vectors dominate, and each graph link costs one 8-byte id.
+- `server/tune.go` — the tuning sweep, run with `go run . bench` from `server/` (saves `benchmarks/hnsw-tuning.md`). Each M is built once and searched at every ef, the way the server runs it, and recall@10 is scored against the exact brute-force top 10 on the same 50 queries. `Recommend` picks the fastest setting that clears 0.95 recall, falling back to the highest recall when none does. `SummarizeStore` / `SummarizeHNSW` size the index: vectors dominate, and each graph link costs one 8-byte id.
 - `scripts/benchmark.py` — the Python end-to-end benchmark: `python scripts/benchmark.py data/sample` times chunking, embedding, and BM25 indexing separately, then times every golden question and reports query p50/p95 next to mean recall@k from the eval harness, plus the saved index size on disk (`--out` saves the report as markdown).
 - Measured on 2000 random unit vectors, dim 256, 50 queries, k=10: brute force p50 1.16 ms / p99 1.89 ms. M=16 ef=64 gives p50 0.67 ms, p99 1.22 ms, recall 0.930; M=16 ef=128 reaches 0.982 at p99 1.61 ms. The sweep recommends M=32 ef=64 (recall 0.992, p99 1.56 ms, 4.9 MB total vs 3.9 MB of vectors). A narrow beam on a sparse graph is the bad corner: M=8 ef=16 finds only 0.382 of the top 10. Two honest caveats: random vectors are near-orthogonal, so these recall numbers are a pessimistic bound — real text embeddings cluster and should do better at the same ef — and at 2000 vectors HNSW barely beats brute force on p99; the graph pays off as the index grows. Defaults stay M=16, ef=64 until measured on real data.
 - Measured on `data/sample` (6 chunks, dim 256): chunking 0.9 ms, embedding 0.9 ms, BM25 index 0.3 ms, query p50 0.7 ms / p95 0.9 ms, mean recall@5 1.000, index 15.1 KB. The sample is tiny, so these numbers are a smoke test that the pipeline is fast, not a load test.
 - `go test ./...` in `server/` passes, and the Python suite is now 153 passed.
 
+## Day 14: docs, demo, final polish
+
+- `scripts/demo.py` — the scripted end-to-end demo: `python scripts/demo.py` builds the index from `data/sample`, asks all six golden questions, and prints each answer with its sources. Then it checks the three things the project is built on: retrieval finds the gold chunks (recall@5 is 1.0), every citation points at a passage that was actually in the prompt (citation precision is 1.0), and every answer is grounded in the retrieved passages (faithfulness is 1.0). A failed check exits non-zero, so the demo is also a smoke test for the whole pipeline. `--question "..."` asks a single question instead of running the golden set. `tests/test_demo.py` covers the demo itself, including a check that a gold chunk that exists nowhere in the index fails recall.
+- This README is now a guide, not a build log: how it works and an architecture diagram up top, a demo section, the server API reference, how to swap in a real embedder or LLM, the measured results, and the known limits. The day-by-day sections below are kept as the record of how each piece was built.
+- Final polish: the Python suite is 157 passed, `go test ./...` in `server/` passes, and `gofmt` and `go vet` are clean. One fix along the way: `scripts/demo.py` adds its own folder to `sys.path`, so the stub generator in `scripts/answer.py` resolves when the demo is loaded from the test suite. A live smoke test also caught a wrong command that had survived since Day 5: `go run ./server --index server/index.json` fails from the repo root because the Go module lives in `server/`, so the README and the `main.go` comment now say `cd server` then `go run . --index index.json`, and the tuning sweep is `go run . bench`.
+
 ## Quickstart
 
 ```bash
 python -m pytest
+python scripts/demo.py
 python -m rag.pipeline data/sample
 python scripts/answer.py data/sample "what is rag?"
 python scripts/evaluate.py data/sample
 python scripts/benchmark.py data/sample
 python scripts/build_index.py data/sample --out server/index.json
-go run ./server --index server/index.json
+cd server
+go run . --index index.json
 curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
 ```
 
@@ -97,6 +133,81 @@ go test ./...
 go test -bench . -run '^$'
 go run . bench
 ```
+
+## Demo
+
+`python scripts/demo.py` runs the whole pipeline over the sample docs
+and checks itself. Each question prints its answer, its sources, and
+three scores; the run ends with `6/6 checks passed`, or exits non-zero
+if any check failed. `python scripts/demo.py --question "what is rag?"`
+asks one question instead.
+
+## API reference
+
+The Go server (from `server/`: `go run . --index index.json`) listens on
+`:8080` by default.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /health` | `{"status": "ok"}` when the server is up. Public. |
+| `GET /stats` | Chunk count, vector dimension, active index (brute force or HNSW), cache hits and misses. Public. |
+| `POST /query` | `{"query": "...", "k": 5}` returns the k best chunks with scores, plus `took_ms` and `cached`. Optional `lambda_mult` (MMR trade-off), `fetch_k` (how many candidates to rerank), and `where` (metadata filter, e.g. `{"doc_id": "rag-intro.md"}`). Requires an API key when keys are configured; rate-limited when a limit is set. |
+| `POST /reload` | Re-reads the index file (and rebuilds the HNSW graph) without restarting. Clears the query cache. |
+
+Flags: `--index` (default `index.json`), `--addr` (default `:8080`),
+`--lambda` (default `0.7`), `--hnsw` (use the approximate index),
+`--ef` (default `64`), `--api-keys` (comma-separated keys, or set
+`RAG_API_KEYS`; empty means open), `--cache-ttl` (default `5m`),
+`--cache-size` (default `1000`), `--rate-limit` (requests per second
+per caller, `0` means no limit), `--rate-burst` (default `10`),
+`--gen-key` (print a fresh key and exit).
+
+## Swapping in a real embedder / LLM
+
+Two seams, both one function each. For embeddings, implement the
+`Embedder` protocol in `rag/embeddings.py` (`dim`, `embed`,
+`embed_many`) and pass it to `build_chunks` / `HybridRetriever` —
+then rebuild the index, since the stored vectors have to come from the
+same encoder as the queries. The Go server's `server/embed.go` must
+match it the same way the hashing embedder does now. For answers, pass
+any prompt-to-string callable to `AnswerGenerator` — for example a
+function that calls an LLM API with the packed prompt and returns its
+text. Citation verification in `rag/answers.py` already runs on the
+model's output, so a real model gets the same check the stub does.
+
+## Results
+
+On `data/sample` (6 chunks, 6 golden questions): mean recall@5 1.000,
+MRR 0.867, mean faithfulness 1.000, mean citation precision 1.000.
+Answer overlap is 0.217 — the stub quotes the top passage instead of
+writing a real answer, so it covers few of the reference answer's
+words; that number should rise with a real model, while faithfulness
+and citation precision are the ones that must not fall.
+
+On 2000 random unit vectors, dim 256, 50 queries, k=10: brute force
+p50 1.16 ms / p99 1.89 ms. M=32 ef=64 reaches 0.992 recall@10 and
+M=16 ef=128 reaches 0.982, both at p99 around 1.5–1.8 ms — which of
+the two is fastest flips between runs on timing noise, so re-measure
+before trusting a recommendation. Full numbers are in
+`server/benchmarks/hnsw-tuning.md` (re-run with `go run . bench` from
+`server/`).
+
+## Known limits
+
+- The hashing embedder is a baseline, not a model: it only sees shared
+  words, so paraphrases and synonyms do not match. Swap in a real
+  encoder before judging retrieval quality on real text.
+- The answer metrics are word-overlap heuristics: they catch invented
+  facts and thin-air citations, but they cannot tell a right answer
+  from a wrong one phrased in the same words.
+- The benchmark vectors are random and near-orthogonal, so the HNSW
+  recall numbers are a pessimistic bound; real embeddings cluster and
+  should do better at the same `ef`. At 2000 vectors the graph barely
+  beats brute force on p99 — it pays off as the index grows.
+- Filtered queries (`where`) always brute-force scan, since the HNSW
+  graph cannot skip vectors a filter would reject.
+- The server keeps the whole index in memory and has no persistence of
+  its own; the Python pipeline owns the index file.
 
 ## Plan
 

@@ -6,7 +6,8 @@
 //
 // Then run the server and ask it a question:
 //
-//	go run ./server --index server/index.json
+//	cd server
+//	go run . --index index.json
 //	curl -X POST localhost:8080/query -d '{"query": "what is rag"}'
 //
 // By default the server is open. Pass --api-keys (or set RAG_API_KEYS
@@ -15,7 +16,7 @@
 // requests per second per caller, and repeated queries are served
 // from an in-memory cache for --cache-ttl.
 //
-// `go run ./server bench` runs the HNSW tuning sweep instead of
+// `go run . bench` (from server/) runs the HNSW tuning sweep instead of
 // serving: latency, recall, and index size per setting, saved to
 // benchmarks/hnsw-tuning.md.
 package main

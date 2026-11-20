@@ -1,4 +1,4 @@
-// Command `go run ./server bench` runs the HNSW tuning sweep on a
+// Command `go run . bench` (from server/) runs the HNSW tuning sweep on a
 // synthetic index (2000 random unit vectors, dim 256), prints the
 // latency / recall / size table, and saves it to
 // benchmarks/hnsw-tuning.md. It measures the search path only —
